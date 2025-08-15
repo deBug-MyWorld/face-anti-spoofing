@@ -27,7 +27,9 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 **3、配置伪造证书**
 
-参考链接：https://blog.csdn.net/guigenyi/article/details/131424405、https://www.cnblogs.com/ioufev/articles/16769063.html
+参考链接：https://blog.csdn.net/guigenyi/article/details/131424405
+
+和 https://www.cnblogs.com/ioufev/articles/16769063.html
 
 **4、项目启动**
 
