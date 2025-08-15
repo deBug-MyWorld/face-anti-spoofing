@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>人脸检测</title>
+    <style>
+        body, html {
+            height: 100%;
+            margin: 0;
+        }
+
+        .video-container {
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+            height: 100%;
+        }
+
+        #processedImage {
+            border-radius: 10px;
+            border: 5px solid #fff;
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+            margin-top: 20px;
+        }
+
+        h1 {
+            margin-bottom: 0.5em;
+        }
+
+        #videoFeed {
+            border-radius: 50%; /* 设置圆角半径为宽度和高度的一半 */
+            {#width: 320px; /* 设置宽度和高度相等 */#}
+            {#height: 320px;#}
+            object-fit: cover; /* 确保视频填充整个元素，同时保持宽高比 */
+            transform: rotateY(180deg);
+        }
+
+        /* 遮罩层样式 */
+        .mask {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5); /* 半透明黑色背景 */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s ease-in-out;
+        }
+
+        /* 当遮罩层可见时的样式 */
+        .mask.visible {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        /* 加载动画样式 */
+        .loader {
+            border: 4px solid rgba(255, 255, 255, 0.3); /* 边框颜色 */
+            border-top: 4px solid #3498db; /* 顶部边框颜色 */
+            border-radius: 50%; /* 圆形 */
+            width: 36px;
+            height: 36px;
+            animation: spin 1s linear infinite; /* 动画 */
+            margin-right: 10px;
+        }
+
+        /* 动画定义 */
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* 文字提示样式 */
+        .processing-text {
+            font-size: 18px;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+<div class="video-container">
+    <h1 id="message-show">face detect</h1>
+    <video id="videoFeed" autoplay playsinline width="320" height="320"></video>
+    <img id="processedImage" width="320" height="320"/>
+</div>
+<!-- 遮罩层和加载动画 -->
+<div class="mask" id="loadingMask">
+    <div class="loader"></div>
+    <span class="processing-text">处理中...</span>
+</div>
+<!-- Load Socket.IO -->
+<script src="static/socket.io.min.js"></script>
+<script>
+    let videoElement = document.getElementById('videoFeed');
+    const processedImage = document.getElementById('processedImage');
+    let userID = null
+    let selected_functions = []
+    let messageShow = document.getElementById('message-show')
+    let actions = {
+        'eye': '请眨眨眼',
+        'mouth': '请张张嘴',
+        'head': '请摇摇头'
+    }
+    // 获取遮罩层元素
+    const mask = document.getElementById('loadingMask');
+
+    let mediaStreamTrack = null
+    // 自动抽帧并发送至后端
+    let captureLoop;
+
+    // function get_userId() {
+    //     fetch('/actions', {
+    //         method: 'get',
+    //         headers: {
+    //             'Content-Type': 'application/json'
+    //         },
+    //     })
+    //         .then(response => response.json())
+    //         .then(data => {
+    //             console.log(data)
+    //             userID = data.user_id;
+    //             selected_functions = data.selected_functions
+    //             updateMessage(actions[selected_functions[0]])
+    //         })
+    //         .catch(error => console.error('请求失败:', error));
+    // }
+
+    function stopCameraStream() {
+        if (mediaStreamTrack) {
+            mediaStreamTrack.getTracks().forEach(track => track.stop());
+            mediaStreamTrack = null;
+            videoElement.srcObject = null;
+        }
+    }
+
+    function stopCameraAndLoop() {
+        stopCameraStream()
+        clearInterval(captureLoop)
+    }
+
+    function disconnectUser(userID) {
+        mask.classList.add('visible');
+        fetch('/disconnectUser', {
+            method: 'post',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({user_id: userID})
+        })
+            .then(response => response.json())
+            .then(data => {
+                mask.classList.remove('visible');
+                console.log(data)
+                // 图片显示
+                if (data.image != null) {
+                    const base64Data = data.image.replace(/^data:image\/jpeg;base64,/, "");
+                    const blob = base64ToBlob(base64Data, 'image/jpeg');
+                    processedImage.src = URL.createObjectURL(blob);
+                    processedImage.onload = () => {
+                        URL.revokeObjectURL(processedImage.src); // Free memory
+                    };
+                }
+                updateMessage(data.message)
+                socket.close()
+            })
+            .catch(error => console.error('请求失败:', error));
+    }
+
+    // get_userId()
+    updateMessage("请根据提示配合动作")
+
+    function updateMessage(value) {
+        messageShow.textContent = value;
+    }
+    let socket = null;
+    if (location.protocol==='http'){
+         socket = io.connect(location.origin);
+    } else {
+         socket = io.connect('wss://'+location.host)
+    }
+
+
+    socket.on('connect', () => {
+        startCamera()
+        console.log('Socket connected!');
+    });
+
+    socket.on('connected', (data) => {
+        // console.log('connected:', data)
+        userID = data.user_id
+        selected_functions = data.selected_functions
+        updateMessage(actions[selected_functions[0]])
+        captureLoop = setInterval(() => {
+            sendFrame()
+        }, 500);
+    })
+
+    socket.on('beforeDisconnect', (data) => {
+        mask.classList.remove('visible');
+       // console.log(data)
+        // 图片显示
+        if (data.image != null) {
+            const base64Data = data.image.replace(/^data:image\/jpeg;base64,/, "");
+            const blob = base64ToBlob(base64Data, 'image/jpeg');
+            processedImage.src = URL.createObjectURL(blob);
+            processedImage.onload = () => {
+                URL.revokeObjectURL(processedImage.src); // Free memory
+            };
+        }
+        updateMessage(data.message)
+        socket.close()
+    })
+
+    socket.on('disconnect', () => {
+        console.log('Socket disconnect!');
+        stopCameraAndLoop()
+    });
+
+
+    socket.on('response', data => {
+        if (data.type === 1) {
+            updateMessage(data.message.msg)
+        } else {
+            if (data.message != null) {
+                updateMessage(data.message)
+            } else {
+                console.log('中断连接')
+                mask.classList.add('visible');
+                socket.emit('disconnectUser', {user_id: userID});
+                stopCameraAndLoop()
+                // disconnectUser(userID)
+                updateMessage("识别中")
+            }
+        }
+
+    });
+
+    function startCamera() {
+        if (navigator.mediaDevices.getUserMedia) {
+            navigator.mediaDevices.getUserMedia({
+                video: {width: 320, height: 320}
+            })
+                .then(function (stream) {
+                    mediaStreamTrack = stream
+                    videoElement.srcObject = stream;
+                    videoElement.play();
+                })
+                .catch(function (err0r) {
+                    console.error('无法访问摄像头:', err0r)
+                    alert("无法访问摄像头，请检查您的浏览器设置或权限。错误详情：" + err0r.name);
+                });
+        }
+    }
+
+
+    function base64ToBlob(base64, mime) {
+        mime = mime || '';
+        const sliceSize = 1024;
+        const byteChars = window.atob(base64);
+        const byteArrays = [];
+
+        let offset = 0, len = byteChars.length;
+        for (; offset < len; offset += sliceSize) {
+            const slice = byteChars.slice(offset, offset + sliceSize);
+
+            const byteNumbers = new Array(slice.length);
+            for (let i = 0; i < slice.length; i++) {
+                byteNumbers[i] = slice.charCodeAt(i);
+            }
+
+            const byteArray = new Uint8Array(byteNumbers);
+
+            byteArrays.push(byteArray);
+        }
+
+        return new Blob(byteArrays, {type: mime});
+    }
+
+
+    function sendFrame() {
+        if (!videoElement || videoElement.paused || videoElement.ended) {
+            // If the video is not playing, stop the loop.
+            return;
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = videoElement.videoWidth;
+        canvas.height = videoElement.videoHeight;
+
+        const context = canvas.getContext('2d');
+        context.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+
+        // Convert the canvas frame to a data URL and send it to the server
+        const dataURL = canvas.toDataURL('image/jpeg');
+        socket.emit('image', {image: dataURL, user_id: userID, selected_functions: selected_functions});
+
+    }
+
+
+</script>
+</body>
+</html>
