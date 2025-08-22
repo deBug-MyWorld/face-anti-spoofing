@@ -22,6 +22,8 @@
 **2、环境安装**
 
 ```
+conda create -n face-anti python=3.11
+conda activate face-anti
 pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
