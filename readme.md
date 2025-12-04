@@ -44,3 +44,9 @@ python AppStart.py
 ```
 https://192.168.31.24:8000/web/
 ```
+
+**5、docker使用**
+
+将dockerfile文件放到文件夹外面，然后运行命令
+
+`docker build -t face-anti .`
